@@ -506,7 +506,10 @@ async fn handle_app_download(State(mgr): State<SyncManager>) -> Response {
     let path = apk_path(&mgr.data_dir());
     match tokio::fs::read(&path).await {
         Ok(bytes) => (
-            [(header::CONTENT_TYPE, "application/vnd.android.package-archive")],
+            [(
+                header::CONTENT_TYPE,
+                "application/vnd.android.package-archive",
+            )],
             bytes,
         )
             .into_response(),
@@ -760,9 +763,13 @@ mod tests {
         let base = format!("http://127.0.0.1:{port}");
 
         // 还没发布新版本
-        let res = reqwest::get(format!("{base}/api/app/latest")).await.unwrap();
+        let res = reqwest::get(format!("{base}/api/app/latest"))
+            .await
+            .unwrap();
         assert_eq!(res.status(), 404);
-        let res = reqwest::get(format!("{base}/api/app/download")).await.unwrap();
+        let res = reqwest::get(format!("{base}/api/app/download"))
+            .await
+            .unwrap();
         assert_eq!(res.status(), 404);
 
         // 发布一个「新版本」
@@ -793,7 +800,9 @@ mod tests {
         assert_eq!(info["size"], apk.len() as u64);
 
         // 未配对也能下（token 被吊销时仍能升级）
-        let res = reqwest::get(format!("{base}/api/app/download")).await.unwrap();
+        let res = reqwest::get(format!("{base}/api/app/download"))
+            .await
+            .unwrap();
         assert_eq!(res.status(), 200);
         assert_eq!(
             res.headers().get(header::CONTENT_TYPE).unwrap(),
@@ -826,7 +835,9 @@ mod tests {
         with_bom.extend_from_slice(json.as_bytes());
         std::fs::write(update_dir.join("pointra.json"), with_bom).unwrap();
 
-        let res = reqwest::get(format!("{base}/api/app/latest")).await.unwrap();
+        let res = reqwest::get(format!("{base}/api/app/latest"))
+            .await
+            .unwrap();
         assert_eq!(res.status(), 200, "带 BOM 的 json 也必须能解析");
         let info: Value = res.json().await.unwrap();
         assert_eq!(info["version"], "0.3.0");
