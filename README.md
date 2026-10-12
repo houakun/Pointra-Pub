@@ -1,4 +1,15 @@
-# Pointra — 光标所指 · 翻译即达
+# Pointra（个人改造版）
+
+> **本仓库是 fork，不是原作者的版本。**
+> - 上游：https://github.com/SYJun404/Pointra-Pub
+> - 手机端配套 App：https://github.com/houakun/Pointra-Mobile
+>
+> **本版相对上游新增**
+> - 生词库 / 句子本（本地 SQLite，`seq` 全局唯一，重复收藏只刷词义不重置进度）
+> - `Alt+S` 收藏当前译文（设置页可改键）+ 结果区收藏按钮
+> - 局域网同步服务：axum HTTP + WebSocket、6 位一次性配对码、二维码、按设备签发/吊销 token、增量分页与即时推送
+> - 设置页「手机同步」区块（开关/端口/配对码/二维码/设备解绑/只读计数）
+> - 手机端自更新接口：`GET /api/app/latest` 与 `GET /api/app/download`
 
 <div align="center">
   <p>
