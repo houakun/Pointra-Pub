@@ -63,6 +63,8 @@ export class ConfigManager {
                 search_win_modifiers: "SUPER",
                 select_text_code: "Digit1",
                 select_text_modifiers: "SUPER",
+                vocab_code: "KeyS",
+                vocab_modifiers: "ALT",
                 theme: "light",
                 first_setup_completed: false,
             };

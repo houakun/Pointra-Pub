@@ -25,6 +25,10 @@ pub struct AppConfig {
     pub search_win_modifiers: Modifiers,
     pub search_win_code: Code,
 
+    /// 收藏到生词本 / 句子本的组合键（默认 Alt+S）
+    pub vocab_modifiers: Modifiers,
+    pub vocab_code: Code,
+
     pub first_setup_completed: bool,
 }
 
@@ -51,6 +55,9 @@ impl Default for AppConfig {
                 Modifiers::SUPER
             },
             search_win_code: Code::Digit2,
+            // 两个平台统一用 Alt+S：macOS 上 Cmd+S 是「保存」，冲突面太广。
+            vocab_modifiers: Modifiers::ALT,
+            vocab_code: Code::KeyS,
             first_setup_completed: false,
         }
     }

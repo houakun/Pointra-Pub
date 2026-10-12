@@ -1,4 +1,4 @@
-import { Volume, VolumeXmark, Copy } from "@gravity-ui/icons";
+import { Volume, VolumeXmark, Copy, Bookmark, BookmarkFill } from "@gravity-ui/icons";
 import { TransResultTypes, UsualDict, Voice } from "../types/transResult";
 import Loading from "./Loading";
 import { invoke } from "@tauri-apps/api/core";
@@ -151,6 +151,12 @@ function Content({
     isAutoPlay: boolean;
     isUs: boolean;
 }) {
+    // 收藏状态必须声明在提前 return 之前，否则违反 Hooks 规则
+    const [isSaved, setIsSaved] = useState(false);
+    useEffect(() => {
+        setIsSaved(false);
+    }, [transResult]);
+
     if (transResult === null) {
         return <Loading />;
     }
@@ -208,26 +214,76 @@ function Content({
         }
     };
 
+    const handleSave = async () => {
+        try {
+            const res = await invoke<{
+                kind: "word" | "sentence";
+                action: "added" | "updated";
+                text: string;
+            }>("vocab_add_current");
+            setIsSaved(true);
+            toast.success(
+                res.action === "updated"
+                    ? `「${res.text}」已更新`
+                    : `「${res.text}」已加入${
+                          res.kind === "word" ? "生词本" : "句子本"
+                      }`,
+                { timeout: 1800 },
+            );
+        } catch (err) {
+            toast.danger(String(err), { timeout: 2500 });
+        }
+    };
+
     return (
         <div className="mx-3 flex flex-col p-3 pt-2.5 flex-1 min-h-0 border-borderMainW border rounded-xl">
             <main className="flex flex-col gap-2 ">
                 <div className="flex justify-between items-center">
                     <p className="text-xl text-mainTitleW">{translate.text}</p>
-                    <div
-                        onClick={handleCopy}
-                        className={`
+                    <div className="flex items-center gap-1.5">
+                        <div
+                            onClick={handleSave}
+                            title="加入生词本 / 句子本（Alt+S）"
+                            className={`
+                            flex items-center justify-center w-6 h-6 rounded-md border cursor-pointer
+                            transition-all duration-200 active:scale-90
+                            ${
+                                isSaved
+                                    ? "bg-emerald-100 border-emerald-300"
+                                    : "bg-emerald-50 border-emerald-200"
+                            }
+                          `}
+                        >
+                            {isSaved ? (
+                                <BookmarkFill
+                                    color="#0d9f6e"
+                                    width={14}
+                                    height={14}
+                                />
+                            ) : (
+                                <Bookmark
+                                    color="#0d9f6e"
+                                    width={14}
+                                    height={14}
+                                />
+                            )}
+                        </div>
+                        <div
+                            onClick={handleCopy}
+                            className={`
                             flex items-center justify-center w-6 h-6 rounded-md border cursor-pointer
                             transition-all duration-200 active:scale-90 bg-blue-50 border-blue-200
 
                           `}
-                    >
-                        <div className={"transition-transform duration-300"}>
-                            <Copy
-                                // 根据状态切换颜色
-                                color={"#4a90d9"}
-                                width={14}
-                                height={14}
-                            />
+                        >
+                            <div className={"transition-transform duration-300"}>
+                                <Copy
+                                    // 根据状态切换颜色
+                                    color={"#4a90d9"}
+                                    width={14}
+                                    height={14}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>

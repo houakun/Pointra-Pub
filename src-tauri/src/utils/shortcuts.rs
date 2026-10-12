@@ -74,9 +74,14 @@ pub fn init_shortcuts<R: Runtime>(app: &AppHandle<R>) {
         Shortcut::new(Some(config.select_text_modifiers), config.select_text_code);
     let shortcut_show_input =
         Shortcut::new(Some(config.search_win_modifiers), config.search_win_code);
+    let shortcut_vocab = Shortcut::new(Some(config.vocab_modifiers), config.vocab_code);
 
     let _ = shortcut_manager.register(shortcut_select_text);
     let _ = shortcut_manager.register(shortcut_show_input);
+    if let Err(err) = shortcut_manager.register(shortcut_vocab) {
+        // 被其它软件占用时静默失败会让用户以为功能坏了，这里显式提示一次
+        eprintln!("[Pointra][生词本] 收藏快捷键注册失败（可能已被其它软件占用）: {err}");
+    }
 }
 
 /// 处理快捷键事件
@@ -89,6 +94,11 @@ pub fn handle_shortcut_event(app: &AppHandle, shortcut: &Shortcut) {
             get_data_from_selected_text(win, app);
         } else if shortcut.matches(config.search_win_modifiers, config.search_win_code) {
             show_input_window(win);
+        } else if shortcut.matches(config.vocab_modifiers, config.vocab_code) {
+            // 收藏不依赖主窗口是否可见，但必须先释放 config 锁
+            drop(config);
+            // notify = true：由 Rust 端发事件，前端统一弹 Toast
+            let _ = crate::commands::vocab::add_current(app, app_state.inner(), true);
         }
     }
 }

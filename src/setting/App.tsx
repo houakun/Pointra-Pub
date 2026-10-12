@@ -4,6 +4,7 @@ import PermissionMacSection from "./components/PermissionMacSection";
 import SettingHeader from "./components/SettingHeader";
 import GeneralSection from "./components/GeneralSection";
 import ShortcutSection from "./components/ShortcutSection";
+import SyncSection from "./components/SyncSection";
 import AboutSection from "./components/AboutSection";
 import CustomToast from "../main/components/CustomToast";
 
@@ -68,6 +69,8 @@ function SettingPage() {
                     onResetOne={resetToDefault}
                     isMac={isMac}
                 />
+
+                <SyncSection />
 
                 <AboutSection />
             </div>

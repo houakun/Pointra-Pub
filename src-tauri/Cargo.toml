@@ -32,7 +32,13 @@ device_query = "4.0.1"
 reqwest = { version = "0.13.3", features = ["json"] }
 md5 = "0.8.0"
 uuid = {version = "1.23.1",  features = ["v4", "serde"] }
-tokio = "1.52.3"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+# 局域网同步服务（HTTP + WebSocket）
+axum = { version = "0.8", features = ["ws"] }
+# 配对二维码：后端直接生成 SVG，前端内联渲染
+qrcode = "0.14"
+# 配对码 / 设备 token 随机生成
+rand = "0.8"
 tauri-plugin-store = "2.4.3"
 rodio = "0.19"
 enigo = "0.6.1"
@@ -42,6 +48,14 @@ ua_generator = "0.5.64"
 tauri-plugin-process = "2"
 tauri-plugin-autostart = "2"
 arboard = "3.6.1"
+# 生词库（本地 SQLite）：bundled 自带 SQLite 源码，免装系统依赖
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha1 = "0.10"
+
+[dev-dependencies]
+# 同步服务集成测试里充当 WS 客户端（只用于测试，不进产物）
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

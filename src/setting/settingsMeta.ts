@@ -6,6 +6,8 @@ type Keys = keyof Pick<
     | "select_text_code"
     | "search_win_modifiers"
     | "search_win_code"
+    | "vocab_modifiers"
+    | "vocab_code"
     | "point_key"
     | "pinned_key"
     | "hide_win_key"
@@ -115,6 +117,22 @@ export const SHORTCUT_LIST_TEMPLATE: {
             },
             {
                 id: "search_win_code",
+                index: 1,
+            },
+        ],
+    },
+    {
+        id: "vocab",
+        label: "收藏生词",
+        rustKeys: ["vocab_modifiers", "vocab_code"],
+        defaultKeys: ["Alt", "S"],
+        save: [
+            {
+                id: "vocab_modifiers",
+                index: 0,
+            },
+            {
+                id: "vocab_code",
                 index: 1,
             },
         ],

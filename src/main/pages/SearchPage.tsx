@@ -1,4 +1,4 @@
-import { Magnifier, Xmark, Hashtag } from "@gravity-ui/icons";
+import { Magnifier, Xmark, Hashtag, Bookmark, BookmarkFill } from "@gravity-ui/icons";
 import { useState, useRef, useEffect } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -18,6 +18,7 @@ function SearchPage({ isMac }: { isMac: boolean }) {
     const [input, setinput] = useState<string>("");
     const [results, setResults] = useState<TransResultZHTypes | null>(null);
     const [loading, setLoading] = useState(false);
+    const [isSaved, setIsSaved] = useState(false);
 
     // 窗口显示时执行的回调
     useOnWindowChange(() => {
@@ -72,6 +73,32 @@ function SearchPage({ isMac }: { isMac: boolean }) {
             toast.danger("复制失败!", {
                 timeout: 1500,
             });
+        }
+    };
+
+    // 拿到新结果就重置收藏状态
+    useEffect(() => {
+        setIsSaved(false);
+    }, [results]);
+
+    const handleSave = async () => {
+        try {
+            const res = await invoke<{
+                kind: "word" | "sentence";
+                action: "added" | "updated";
+                text: string;
+            }>("vocab_add_current");
+            setIsSaved(true);
+            toast.success(
+                res.action === "updated"
+                    ? `「${res.text}」已更新`
+                    : `「${res.text}」已加入${
+                          res.kind === "word" ? "生词本" : "句子本"
+                      }`,
+                { timeout: 1800 },
+            );
+        } catch (err) {
+            toast.danger(String(err), { timeout: 2500 });
         }
     };
 
@@ -130,6 +157,30 @@ function SearchPage({ isMac }: { isMac: boolean }) {
                         className="absolute right-3 top-3 cursor-pointer"
                     />
                 </div>
+
+                {results && (
+                    <div
+                        onClick={handleSave}
+                        title="加入生词本 / 句子本（Alt+S）"
+                        className={`flex items-center justify-center w-6 h-6 shrink-0 rounded-md border
+                            cursor-pointer transition-all duration-200 active:scale-90
+                            ${
+                                isSaved
+                                    ? "bg-emerald-100 border-emerald-300"
+                                    : "bg-emerald-50 border-emerald-200"
+                            }`}
+                    >
+                        {isSaved ? (
+                            <BookmarkFill
+                                color="#0d9f6e"
+                                width={14}
+                                height={14}
+                            />
+                        ) : (
+                            <Bookmark color="#0d9f6e" width={14} height={14} />
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* 搜索结果区域 */}

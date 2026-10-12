@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { RustAppConfig } from "../setting/types";
 import { useShallow } from "zustand/react/shallow";
 import { usePlatform } from "../hooks/usePlatform";
+import { toast } from "@heroui/react";
 
 function App() {
     const navigate = useNavigate();
@@ -74,6 +75,19 @@ function App() {
                         navigate("/search");
                     } else if (event.payload.type === "config") {
                         updateConfig(event.payload.data);
+                    } else if (event.payload.type === "vocab") {
+                        // Alt+S 收藏成功：结果由 Rust 端推来，这里统一弹提示
+                        const { action, text, kind } = event.payload.data;
+                        toast.success(
+                            action === "updated"
+                                ? `「${text}」已更新`
+                                : `「${text}」已加入${
+                                      kind === "word" ? "生词本" : "句子本"
+                                  }`,
+                            { timeout: 2000 },
+                        );
+                    } else if (event.payload.type === "vocab-error") {
+                        toast.danger(event.payload.data, { timeout: 2500 });
                     }
                 },
             );

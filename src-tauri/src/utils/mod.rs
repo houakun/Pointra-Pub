@@ -22,6 +22,8 @@ pub mod get_text;
 pub mod ocr_common;
 pub mod shortcuts;
 pub mod show_window;
+pub mod sync_server;
 pub mod trans_server;
 pub mod tray;
 pub mod update;
+pub mod vocab;
