@@ -34,6 +34,12 @@ const DEFAULT_PAGE_SIZE: i64 = 500;
 const MAX_PAGE_SIZE: i64 = 2000;
 const KEEPALIVE_SECS: u64 = 15;
 
+// 手机端自更新：APK 与版本信息放在 <data_dir>/update/ 下，
+// 由发布脚本（scripts/publish-update.ps1）拷贝进去。
+const APK_DIR: &str = "update";
+const APK_NAME: &str = "pointra.apk";
+const APK_META_NAME: &str = "pointra.json";
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -202,6 +208,15 @@ impl SyncManager {
 
     pub fn subscribe(&self) -> broadcast::Receiver<SyncEvent> {
         self.inner.events.subscribe()
+    }
+
+    /// 数据目录（`vocab.db` 所在目录）。手机端自更新的 APK 也放这里的 `update/` 下。
+    pub fn data_dir(&self) -> PathBuf {
+        self.inner
+            .db_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     /// 把一次收藏广播给所有在线手机端。
@@ -443,6 +458,62 @@ impl SyncManager {
 // HTTP / WebSocket 层
 // ---------------------------------------------------------------------------
 
+fn not_found(msg: &str) -> Response {
+    (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
+}
+
+fn apk_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(APK_DIR).join(APK_NAME)
+}
+
+fn apk_meta_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(APK_DIR).join(APK_META_NAME)
+}
+
+/// 读发布元数据，**容错 UTF-8 BOM**：
+/// 用户可能用记事本 / PowerShell 写这个文件，很容易带上 `EF BB BF`，
+/// 而 `serde_json` 会直接报 `expected value at line 1 column 1`。
+fn read_meta(path: &Path) -> Result<AppRelease, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读不到版本信息：{e}"))?;
+    serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("版本信息 pointra.json 损坏: {e}"))
+}
+
+/// 手机端「检查更新」读的版本信息（由发布脚本写成 JSON）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppRelease {
+    pub version: String,
+    pub version_code: i64,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// `GET /api/app/latest`。**免鉴权**（与 ping/pair 一致）：
+/// 即使配对 token 被吊销，也还能把 App 升上来。
+async fn handle_app_latest(State(mgr): State<SyncManager>) -> Response {
+    let data_dir = mgr.data_dir();
+    if !apk_path(&data_dir).exists() {
+        return not_found("电脑端还没放新版本 APK（update/pointra.apk）");
+    }
+    match read_meta(&apk_meta_path(&data_dir)) {
+        Ok(info) => Json(info).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+/// `GET /api/app/download`。与 latest 配套，同样免鉴权。
+async fn handle_app_download(State(mgr): State<SyncManager>) -> Response {
+    let path = apk_path(&mgr.data_dir());
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [(header::CONTENT_TYPE, "application/vnd.android.package-archive")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => not_found("APK 不存在"),
+    }
+}
+
 fn build_router(mgr: SyncManager) -> Router {
     Router::new()
         .route("/api/ping", get(handle_ping))
@@ -451,6 +522,9 @@ fn build_router(mgr: SyncManager) -> Router {
         .route("/api/sentences", get(handle_sentences))
         .route("/api/stats", get(handle_stats))
         .route("/api/events", get(handle_events))
+        // 手机端自更新（免鉴权，见 docs/02）
+        .route("/api/app/latest", get(handle_app_latest))
+        .route("/api/app/download", get(handle_app_download))
         .with_state(mgr)
 }
 
@@ -673,6 +747,89 @@ mod tests {
             &json!({ "translate": { "text": "one two three", "dit": "一二三" } }),
         )
         .unwrap();
+    }
+
+    /// 手机端自更新：没放包时 404（手机端据此认为「已是最新」）；
+    /// 放了包后 latest 返回版本信息、download 返回 APK 字节，且**两个接口都免鉴权**。
+    #[tokio::test]
+    async fn app_update_endpoints_are_public_and_serve_the_apk() {
+        let dir = temp_dir();
+        let mgr = SyncManager::new(&dir);
+        mgr.set_config(true, 0).unwrap();
+        let port = mgr.start().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+
+        // 还没发布新版本
+        let res = reqwest::get(format!("{base}/api/app/latest")).await.unwrap();
+        assert_eq!(res.status(), 404);
+        let res = reqwest::get(format!("{base}/api/app/download")).await.unwrap();
+        assert_eq!(res.status(), 404);
+
+        // 发布一个「新版本」
+        let update_dir = dir.join("update");
+        std::fs::create_dir_all(&update_dir).unwrap();
+        let apk = b"FAKE-APK-BYTES";
+        std::fs::write(update_dir.join("pointra.apk"), apk).unwrap();
+        std::fs::write(
+            update_dir.join("pointra.json"),
+            serde_json::to_string(&AppRelease {
+                version: "0.2.0".into(),
+                version_code: 2000,
+                size: apk.len() as u64,
+                sha256: "deadbeef".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let info: Value = reqwest::get(format!("{base}/api/app/latest"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(info["version"], "0.2.0");
+        assert_eq!(info["version_code"], 2000);
+        assert_eq!(info["size"], apk.len() as u64);
+
+        // 未配对也能下（token 被吊销时仍能升级）
+        let res = reqwest::get(format!("{base}/api/app/download")).await.unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(
+            res.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/vnd.android.package-archive"
+        );
+        assert_eq!(res.bytes().await.unwrap().as_ref(), apk);
+    }
+
+    /// 发布元数据可能被记事本/PowerShell 写成带 UTF-8 BOM 的文件，
+    /// `serde_json` 会因此解析失败——服务端必须容错，否则手机端永远看到「信息损坏」。
+    #[tokio::test]
+    async fn app_latest_tolerates_utf8_bom() {
+        let dir = temp_dir();
+        let mgr = SyncManager::new(&dir);
+        mgr.set_config(true, 0).unwrap();
+        let port = mgr.start().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+
+        let update_dir = dir.join("update");
+        std::fs::create_dir_all(&update_dir).unwrap();
+        std::fs::write(update_dir.join("pointra.apk"), b"APK").unwrap();
+        let json = serde_json::to_string(&AppRelease {
+            version: "0.3.0".into(),
+            version_code: 3000,
+            size: 3,
+            sha256: "x".into(),
+        })
+        .unwrap();
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice(json.as_bytes());
+        std::fs::write(update_dir.join("pointra.json"), with_bom).unwrap();
+
+        let res = reqwest::get(format!("{base}/api/app/latest")).await.unwrap();
+        assert_eq!(res.status(), 200, "带 BOM 的 json 也必须能解析");
+        let info: Value = res.json().await.unwrap();
+        assert_eq!(info["version"], "0.3.0");
     }
 
     /// 一条测试打通：ping → 鉴权 → 配对（一次性）→ 增量拉取 → 再拉为空。

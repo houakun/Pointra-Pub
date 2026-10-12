@@ -7,8 +7,9 @@
 //!
 //! 运行：
 //! ```text
-//! cargo run --example sync_dev_server -- <data_dir> [words] [sentences]
+//! cargo run --example sync_dev_server -- <data_dir> [words] [sentences] [port]
 //! ```
+//! 端口放最后，方便和宿主上已在跑的正式 App（占着 31415）共存。
 
 use pointra_lib::utils::sync_server::SyncManager;
 use pointra_lib::utils::vocab;
@@ -24,6 +25,8 @@ fn main() {
     );
     let words: i64 = args.next().and_then(|v| v.parse().ok()).unwrap_or(30_000);
     let sentences: i64 = args.next().and_then(|v| v.parse().ok()).unwrap_or(50);
+    // 端口可改：本机正式 App 通常已占着 31415
+    let port: u16 = args.next().and_then(|v| v.parse().ok()).unwrap_or(31415);
 
     // SyncManager::start 内部用 tauri::async_runtime::spawn，先给它一个 tokio 运行时
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -84,7 +87,7 @@ fn main() {
     drop(conn);
 
     let mgr = SyncManager::new(&dir);
-    mgr.set_config(true, 31415).expect("写入同步配置失败");
+    mgr.set_config(true, port).expect("写入同步配置失败");
     let port = mgr.start().expect("启动同步服务失败");
     let info = mgr.pairing_info();
 

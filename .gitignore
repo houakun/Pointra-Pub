@@ -26,3 +26,7 @@ dist-ssr
 # Private files
 src-tauri/src/utils/update.rs
 src-tauri/src/utils/trans_server.rs
+
+# pi agent 工作文件（不进版本库）
+.pi/
+PLAN.md
