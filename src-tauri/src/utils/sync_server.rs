@@ -7,6 +7,7 @@
 //! 鉴权：每台配对设备一个独立 token，便于单独吊销（`sync_unpair`）。
 //! 明文 HTTP 是有意为之——只跑在用户自己的局域网内，且需求明确不要云与账号（E18）。
 
+use crate::utils::trans_server;
 use crate::utils::vocab::{self, VocabAddResult};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -24,7 +25,7 @@ use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot};
 
@@ -528,6 +529,8 @@ fn build_router(mgr: SyncManager) -> Router {
         // 手机端自更新（免鉴权，见 docs/02）
         .route("/api/app/latest", get(handle_app_latest))
         .route("/api/app/download", get(handle_app_download))
+        // 手机端阅读页查词（只读，不落库、不推事件）
+        .route("/api/lookup", get(handle_lookup))
         .with_state(mgr)
 }
 
@@ -545,6 +548,10 @@ fn internal_error(msg: String) -> Response {
         Json(json!({ "error": msg })),
     )
         .into_response()
+}
+
+fn bad_request(msg: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<String> {
@@ -664,6 +671,82 @@ async fn handle_stats(State(mgr): State<SyncManager>, headers: HeaderMap) -> Res
         .into_response(),
         Err(err) => internal_error(err),
     }
+}
+
+#[derive(Deserialize)]
+struct LookupQuery {
+    q: String,
+}
+
+/// 查词用的 reqwest 客户端（连接池复用；有道是 https，PC 端本来就带 TLS）。
+fn lookup_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+/// `GET /api/lookup?q=<词>`：手机端阅读页查词。
+///
+/// 存在的意义：手机能连到 PC、但自己上不了外网（热点 / 内网环境）时依然能查词。
+/// 它走 PC 已有的有道通道，返回字段与手机端直连时**同一套语义**。
+///
+/// 只读接口：不落 `vocab.db`、不发 WS 事件、不改动单向同步协议的任何语义。
+async fn handle_lookup(
+    State(mgr): State<SyncManager>,
+    headers: HeaderMap,
+    Query(q): Query<LookupQuery>,
+) -> Response {
+    match bearer_token(&headers) {
+        Some(t) if mgr.authenticate(&t) => {}
+        _ => return unauthorized(),
+    }
+
+    let word = q.q.trim().to_string();
+    if word.is_empty() {
+        return bad_request("缺少查询参数 q");
+    }
+
+    match trans_server::fetch_translation_with_client(&word, lookup_client()).await {
+        Ok(data) => Json(to_mobile_lookup(&word, &data)).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+/// 把 PC 的 `TransData` 压成手机端 `WordLookup` 的字段形状（与移动端 `dict.rs` 对齐）。
+///
+/// 手机端只认这几个字段，所以不把 PC 前端那套 `translate`/`wordCard`/`voice` 三层壳
+/// 原样丢过去：那样手机端得再写一遍解析，两边更容易漂移。
+fn to_mobile_lookup(word: &str, trans: &Value) -> Value {
+    let phonetics = trans
+        .pointer("/voice/phonetic")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let pick = |kind: &str| -> Option<String> {
+        phonetics
+            .iter()
+            .find(|item| item.get("type").and_then(Value::as_str) == Some(kind))
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+
+    json!({
+        "word": word,
+        "phonetic_us": pick("usa"),
+        "phonetic_uk": pick("uk"),
+        "dit": trans.pointer("/translate/dit").and_then(Value::as_str),
+        "usual_dict": trans
+            .pointer("/wordCard/usualDict")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "exchange": trans
+            .pointer("/wordCard/exchange")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    })
 }
 
 #[derive(Deserialize)]
@@ -1139,6 +1222,107 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         assert!(cleared, "客户端断开后连接计数应回落到 0");
+
+        mgr.stop();
+    }
+
+    // --- 阅读查词接口（/api/lookup）----------------------------------------
+
+    /// 字段映射：手机端只认这几个字段，映错了词卡就是空的。
+    #[test]
+    fn mobile_lookup_shape_matches_the_app() {
+        let trans = json!({
+            "translate": { "dit": "adj. 重要的；显著的" },
+            "wordCard": {
+                "usualDict": [{ "pos": "adj.", "values": ["重要的"] }],
+                "exchange": { "word_pl": ["significants"] }
+            },
+            "voice": {
+                "phonetic": [
+                    { "type": "usa", "text": "sɪɡˈnɪfɪkənt", "filename": "x" },
+                    { "type": "uk", "text": "sɪɡˈnɪfɪkənt", "filename": "y" }
+                ]
+            }
+        });
+
+        let out = to_mobile_lookup("significant", &trans);
+        assert_eq!(out["word"], "significant");
+        assert_eq!(out["phonetic_us"], "sɪɡˈnɪfɪkənt");
+        assert_eq!(out["phonetic_uk"], "sɪɡˈnɪfɪkənt");
+        assert_eq!(out["dit"], "adj. 重要的；显著的");
+        assert_eq!(out["usual_dict"][0]["pos"], "adj.");
+        assert_eq!(out["exchange"]["word_pl"][0], "significants");
+    }
+
+    /// 缺字段时给空值，不能让手机端解析炸掉。
+    #[test]
+    fn mobile_lookup_tolerates_missing_sections() {
+        let out = to_mobile_lookup("xyz", &json!({ "translate": { "dit": "…" } }));
+        assert!(out["phonetic_us"].is_null());
+        assert_eq!(out["usual_dict"], json!([]));
+        assert_eq!(out["exchange"], json!({}));
+    }
+
+    /// 只读接口同样要鉴权：未配对设备拿不到结果，不破坏既有鉴权模型。
+    #[tokio::test]
+    async fn lookup_requires_auth() {
+        let dir = temp_dir();
+        let mgr = SyncManager::new(&dir);
+        mgr.set_config(true, 0).unwrap();
+        let port = mgr.start().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+
+        let res = reqwest::get(format!("{base}/api/lookup?q=one"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 401);
+
+        mgr.stop();
+    }
+
+    /// 真实联网验证（默认跳过：`cargo test -- --ignored live_lookup_`）——
+    /// 带 token 请求新接口，返回字段必须与手机端直连有道的形状一致。
+    #[tokio::test]
+    #[ignore = "需要联网：cargo test -- --ignored live_lookup_"]
+    async fn live_lookup_returns_the_same_shape_as_direct_query() {
+        let dir = temp_dir();
+        let mgr = SyncManager::new(&dir);
+        mgr.set_config(true, 0).unwrap();
+        let port = mgr.start().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+
+        let code = mgr.pairing_info().code;
+        let client = reqwest::Client::new();
+        let paired: Value = client
+            .post(format!("{base}/api/pair"))
+            .json(&json!({ "code": code, "device_name": "lookup-test" }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let token = paired["token"].as_str().unwrap().to_string();
+
+        let res = client
+            .get(format!("{base}/api/lookup?q=significant"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let body: Value = res.json().await.unwrap();
+
+        assert_eq!(body["word"], "significant");
+        assert!(
+            body["phonetic_us"].is_string() || body["phonetic_uk"].is_string(),
+            "应该有音标：{body}"
+        );
+        assert!(
+            !body["usual_dict"].as_array().unwrap().is_empty(),
+            "应该有按词性分组的释义：{body}"
+        );
+        assert!(body["dit"].is_string(), "应该有主释义：{body}");
 
         mgr.stop();
     }
