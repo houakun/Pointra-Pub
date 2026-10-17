@@ -487,6 +487,10 @@ pub struct AppRelease {
     pub version_code: i64,
     pub size: u64,
     pub sha256: String,
+    /// 这个版本改了什么（发布脚本写进 `pointra.json`，手机端直接展示给用户）。
+    /// 旧元数据里没这个字段，所以 `default`。
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 /// `GET /api/app/latest`。**免鉴权**（与 ping/pair 一致）：
